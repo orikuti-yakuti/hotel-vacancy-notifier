@@ -96,6 +96,37 @@ def _as_price(value, label: str, key: str):
         raise ConfigError(f"watches.toml の「{label}」の {key} は数字で書いてください（例: 8000）") from e
 
 
+DEFAULT_QUIET_HOURS = [1, 5]   # 夜間（日本時間 1:00〜4:59）は自動チェックで通知しない
+
+
+def load_quiet_hours() -> list[int]:
+    """watches.toml の [settings] quiet_hours = [開始時, 終了時] を読む。
+    書かれていなければ [1, 5]（1時〜5時）。[] にすると夜間停止なし。"""
+    try:
+        with CONFIG_PATH.open("rb") as f:
+            data = tomllib.load(f)
+    except (FileNotFoundError, tomllib.TOMLDecodeError):
+        return DEFAULT_QUIET_HOURS
+    value = (data.get("settings") or {}).get("quiet_hours", DEFAULT_QUIET_HOURS)
+    if value in ([], None, False):
+        return []
+    try:
+        start, end = int(value[0]), int(value[1])
+    except (TypeError, ValueError, IndexError) as e:
+        raise ConfigError("watches.toml の quiet_hours は [1, 5] のように「開始時, 終了時」で書いてください") from e
+    if not (0 <= start <= 23 and 0 <= end <= 24) or start == end:
+        raise ConfigError("watches.toml の quiet_hours は 0〜24 の時刻で、開始と終了を別の値にしてください")
+    return [start, end]
+
+
+def in_quiet_hours(now: dt.datetime, quiet: list[int]) -> bool:
+    if not quiet:
+        return False
+    start, end = quiet
+    h = now.hour
+    return start <= h < end if start < end else (h >= start or h < end)   # 日をまたぐ指定（例 [23, 6]）にも対応
+
+
 def load_watches() -> list[dict]:
     if not CONFIG_PATH.exists():
         raise ConfigError(f"{CONFIG_PATH.name} が見つかりません")
@@ -621,6 +652,14 @@ def check_watch(w: dict, creds: dict, station_cache: dict) -> tuple[dict, dict]:
 
 
 def run(dry_run: bool) -> int:
+    # 夜間は自動実行（schedule）では何もしない。手動実行（Run workflow）なら夜間でも動く。
+    # 夜間に出た空室は、夜間明けの最初のチェックで（まだ空いていれば）通知される。
+    now = dt.datetime.now(JST)
+    quiet = load_quiet_hours()
+    if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and in_quiet_hours(now, quiet):
+        print(f"🌙 夜間（{quiet[0]}:00〜{quiet[1]}:00）のため、今回の自動チェックはスキップしました（{now:%H:%M}）")
+        return 0
+
     creds = {
         "app_id": env("RAKUTEN_APP_ID"),
         "access_key": env("RAKUTEN_ACCESS_KEY"),
