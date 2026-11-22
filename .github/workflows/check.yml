@@ -1,0 +1,60 @@
+name: 空室チェック
+
+on:
+  schedule:
+    # 30分ごとに実行（UTC表記ですが「毎時0分・30分」なので日本時間でも同じ）
+    # 間隔を変えるときは README の「チェック間隔を変える」を参照
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 実行モード
+        type: choice
+        options:
+          - 通常
+          - LINEテスト通知
+          - 通知せずに確認
+        default: 通常
+
+concurrency:
+  group: vacancy-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 前回の結果を読み込む
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: vacancy-state-${{ github.run_id }}
+          restore-keys: vacancy-state-
+
+      - name: 空室を確認
+        env:
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
+          RAKUTEN_REFERER: ${{ secrets.RAKUTEN_REFERER || format('{0}/{1}', github.server_url, github.repository) }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          case "$MODE" in
+            "LINEテスト通知") python3 check_vacancy.py --test-line ;;
+            "通知せずに確認") python3 check_vacancy.py --dry-run ;;
+            *)               python3 check_vacancy.py ;;
+          esac
+
+      - name: 結果を保存
+        if: always() && hashFiles('state/state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: vacancy-state-${{ github.run_id }}

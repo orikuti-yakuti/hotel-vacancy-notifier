@@ -1,0 +1,26 @@
+name: ホテル番号を調べる
+
+on:
+  workflow_dispatch:
+    inputs:
+      keyword:
+        description: ホテル名（例：東横INN 甲府）
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: 楽天トラベルで検索
+        env:
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
+          RAKUTEN_REFERER: ${{ secrets.RAKUTEN_REFERER || format('{0}/{1}', github.server_url, github.repository) }}
+          KEYWORD: ${{ inputs.keyword }}
+        run: python3 find_hotel.py
